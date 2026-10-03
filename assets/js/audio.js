@@ -8,7 +8,11 @@
    На iPhone будить можно только отпусканием пальца (pointerup, touchend, click) —
    pointerdown и touchstart не считаются, поэтому будим по ним, а не по нажатию.
    Если WebAudio недоступен (например, игра открыта двойным кликом, file://),
-   голоса играют обычными <audio>. Короткие эффекты (очко, удар) — синтез. */
+   голоса играют обычными <audio>. Короткие эффекты (очко, удар) — синтез.
+
+   Музыка заставки — assets/audio/music.m4a (tools/make-music.py), играет по кругу,
+   пока игрок не сделает первый взмах. Браузеры не дают включить звук до первого
+   касания, поэтому, если сразу нельзя, музыка стартует с касанием. */
 (() => {
   'use strict';
 
@@ -51,8 +55,8 @@
       } catch (e) { /* пробуем следующий формат */ }
     }
   }
-  loadBuffer('cry');
-  loadBuffer('am');
+  const loaded = {};                  // что уже отработало: пригодилось ли запасному пути
+  ['cry', 'am', 'music'].forEach((name) => loadBuffer(name).then(() => { loaded[name] = true; startMusic(); }));
 
   // Тон меняется вместе со скоростью: выше и быстрее — ближе к детскому голосу.
   // vibrato — дрожание тона, как всхлип.
@@ -122,7 +126,7 @@
     const c = context();
     if (c && c.state !== 'running') {
       const r = c.resume();
-      if (r && r.catch) r.catch(() => {});
+      if (r && r.then) r.then(startMusic, () => {});
       try {                           // тихий буфер: на старых iOS только он включает звук
         const s = c.createBufferSource();
         s.buffer = c.createBuffer(1, 1, 22050);
@@ -130,6 +134,7 @@
         s.start(0);
       } catch (e) { /* не страшно */ }
     }
+    startMusic();                     // запасному <audio> играть надо прямо в жесте
     // Запасному <audio> нужно один раз беззвучно сыграть плач в жесте, иначе iOS
     // не даст запустить его в момент удара. Если WebAudio загрузил голос — не нужно.
     if (!buffers.cry && !elementUnlocked) {
@@ -145,6 +150,47 @@
   ['pointerup', 'touchend', 'click', 'keydown'].forEach((ev) => {
     addEventListener(ev, unlock, { capture: true, passive: true });
   });
+
+  // ── Музыка заставки ─────────────────────────────────────────────────────────
+  const MUSIC_VOL = 0.8;
+  let wantMusic = false;
+  let musicNode = null, musicGain = null, musicEl = null;
+
+  function startMusic() {
+    if (!wantMusic || muted || musicNode || (musicEl && !musicEl.paused)) return;
+    if (buffers.music) {
+      if (!running()) return;         // дождёмся касания: после него сюда вернёмся
+      musicGain = ac.createGain();
+      musicGain.gain.value = MUSIC_VOL;
+      musicNode = ac.createBufferSource();
+      musicNode.buffer = buffers.music;
+      musicNode.loop = true;
+      musicNode.connect(musicGain).connect(ac.destination);
+      musicNode.start();
+    } else if (loaded.music) {        // WebAudio не смог: играем обычным <audio>
+      if (!musicEl) {
+        musicEl = new Audio('assets/audio/music.m4a');
+        musicEl.loop = true;
+        musicEl.volume = MUSIC_VOL;
+      }
+      const p = musicEl.play();
+      if (p && p.catch) p.catch(() => {});
+    }
+  }
+
+  function haltMusic(fade) {
+    if (musicNode) {
+      const node = musicNode, gain = musicGain;
+      musicNode = musicGain = null;
+      try {
+        const t = ac.currentTime;
+        gain.gain.setValueAtTime(gain.gain.value, t);
+        gain.gain.linearRampToValueAtTime(0, t + fade);
+        node.stop(t + fade + 0.05);
+      } catch (e) { /* уже стоит */ }
+    }
+    if (musicEl) musicEl.pause();
+  }
 
   // ── Эффекты ─────────────────────────────────────────────────────────────────
   function tone(freq, dur, o = {}) {
@@ -221,14 +267,26 @@
       noise(0.16, 0.25);
       tone(190, 0.28, { type: 'sawtooth', to: 50, vol: 0.2 });
     },
+    // on = true: музыка заставки должна играть (стартует, как только браузер позволит);
+    // false: плавно затихает и больше не включается.
+    music(on) {
+      wantMusic = on;
+      if (on) startMusic(); else haltMusic(0.5);
+    },
     toggleMute() {
       muted = !muted;
       save(muted);
-      if (muted) { stopCry(); try { am.forEach((a) => a.pause()); } catch (e) { /* ничего */ } }
+      if (muted) { stopCry(); haltMusic(0.1); try { am.forEach((a) => a.pause()); } catch (e) { /* ничего */ } }
+      else startMusic();
       return muted;
     },
     get muted() { return muted; },
     // Для отладки из консоли: состояние контекста и какие голоса загружены.
-    info() { return { context: ac ? ac.state : 'нет', buffers: Object.keys(buffers) }; },
+    info() {
+      return {
+        context: ac ? ac.state : 'нет', buffers: Object.keys(buffers),
+        music: !!musicNode || !!(musicEl && !musicEl.paused),
+      };
+    },
   };
 })();

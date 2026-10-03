@@ -147,7 +147,7 @@
   function press() {
     Sound.unlock();
     if (state === 'menu') { state = 'ready'; t = 0; }
-    else if (state === 'ready') { state = 'play'; flap(); }
+    else if (state === 'ready') { state = 'play'; Sound.music(false); flap(); }
     else if (state === 'play') flap();
     else if (state === 'over' && overT > RESTART_AFTER) reset();
   }
@@ -647,6 +647,7 @@
     reset();
     state = 'menu';                                 // игра открывается с вопроса, а не сразу со старта
     face.base = face.y = MENU_FACE_Y;
+    Sound.music(true);                              // заставка играет, пока игрок не нажмёт
     fit();
     addEventListener('resize', fit);
     screen.addEventListener('pointerdown', onPointer);

@@ -68,6 +68,19 @@ python3 tools/pixelate.py
 zsh tools/make-voices.sh
 ```
 
+## Музыка заставки
+
+На стартовом экране (меню и «НАЖМИ») играет 20 секунд песни по кругу, с первым взмахом
+она плавно затихает и больше не возвращается. Файл — `assets/audio/music.m4a`. Другой
+кусок или песню можно вырезать так (нужен macOS):
+
+```bash
+python3 tools/make-music.py "/путь/к/песне.mp3" --start 22.1 --length 20
+```
+
+Браузеры не разрешают звук до первого касания, поэтому на телефоне музыка начнётся с
+первым тапом по экрану, а не в момент открытия страницы.
+
 ## Звук на телефоне
 
 Голоса играют через WebAudio. iPhone разрешает звук только после отпускания пальца
@@ -100,7 +113,7 @@ assets/js/audio.js  звуки: голоса героя и короткие эф
 assets/js/font.js   пиксельный шрифт 5×7 (кириллица, цифры)
 assets/js/sprites.js  манифест спрайтов — создаёт tools/pixelate.py
 assets/*.png        спрайты: face.png, pipe-N.png
-assets/audio        cry.m4a, am.m4a (и свои cry.mp3, am.mp3)
+assets/audio        cry.m4a, am.m4a, music.m4a (и свои cry.mp3, am.mp3, music.mp3)
 source/             исходные фото, в git не попадают
-tools/              pixelate.py, make-voices.sh
+tools/              pixelate.py, make-voices.sh, make-music.py
 ```
