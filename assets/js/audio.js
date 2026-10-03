@@ -16,6 +16,10 @@
 (() => {
   'use strict';
 
+  // Версия файлов: меняется вместе со звуками, чтобы встроенные браузеры (Телеграм и др.)
+  // не отдавали старые из кеша.
+  const VER = '?v=2';
+
   const KEY = 'face-flappy.muted';
   const load = () => { try { return localStorage.getItem(KEY) === '1'; } catch (e) { return false; } };
   const save = (v) => { try { localStorage.setItem(KEY, v ? '1' : '0'); } catch (e) { /* не страшно */ } };
@@ -48,7 +52,7 @@
     if (!context() || !window.fetch) return;
     for (const ext of ['mp3', 'm4a']) {
       try {
-        const r = await fetch(`assets/audio/${name}.${ext}`);
+        const r = await fetch(`assets/audio/${name}.${ext}${VER}`);
         if (!r.ok) continue;
         buffers[name] = await decode(await r.arrayBuffer());
         return;
@@ -88,7 +92,7 @@
     first.preload = 'auto';
     [['mp3', 'audio/mpeg'], ['m4a', 'audio/mp4']].forEach(([ext, type]) => {
       const s = document.createElement('source');
-      s.src = `assets/audio/${name}.${ext}`;
+      s.src = `assets/audio/${name}.${ext}${VER}`;
       s.type = type;
       first.appendChild(s);
     });
@@ -171,7 +175,7 @@
       musicNode.start();
     } else if (loaded.music) {        // WebAudio не смог: играем обычным <audio>
       if (!musicEl) {
-        musicEl = new Audio('assets/audio/music.m4a');
+        musicEl = new Audio('assets/audio/music.m4a' + VER);
         musicEl.loop = true;
       }
       musicEl.volume = musicLevel;
