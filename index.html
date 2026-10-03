@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#3b82d6">
+  <title>Глобус — Flappy</title>
+  <style>
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: #14121f;
+      overflow: hidden;
+      overscroll-behavior: none;
+      touch-action: none;
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    body { display: grid; place-items: center; }
+    /* Размер холста задаёт game.js: целое число физических пикселей на пиксель игры. */
+    #game { display: block; image-rendering: pixelated; image-rendering: crisp-edges; }
+  </style>
+</head>
+<body>
+  <canvas id="game" width="144" height="256" aria-label="Игра: лицо летит между трубами"></canvas>
+
+  <script src="assets/js/sprites.js"></script>
+  <script src="assets/js/font.js"></script>
+  <script src="assets/js/audio.js"></script>
+  <script src="assets/js/game.js"></script>
+</body>
+</html>
