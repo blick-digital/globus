@@ -15,7 +15,7 @@
   const SPEED = 60;                 // скорость мира
   const GAP = 86;                   // просвет: свободный зазор ≈2 подъёмов взмаха
   const SPACING = 92;               // расстояние между трубами по горизонтали
-  const MARGIN = 28;                // минимум видимой трубы сверху и снизу
+  const MARGIN = 30;                // минимум видимой трубы сверху и снизу
   const MAX_SHIFT = 54;             // на сколько просвет может уехать относительно прошлого
 
   const FACE_X = 40;
@@ -25,8 +25,10 @@
   const OPEN = 0.26;                // максимум раскрытия рта — доля высоты головы
 
   // Размеры спрайта трубы — те же, что в tools/pixelate.py.
-  const PIPE_W = 26, CAP_W = 30, CAP_H = 12, TILE_H = 16;
-  const DOME = 3;                   // верхние строки шапки скруглены: в хитбоксе они уже
+  const PIPE_W = 27, CAP_W = 31, CAP_H = 22, TILE_H = 16;
+  const CAP_OFF = (CAP_W - PIPE_W) / 2;   // на сколько шапка выступает за ствол с каждой стороны
+  const DOME_R = CAP_W / 2;               // шапка — полукруг этого радиуса, плюс прямой пояс под ним
+  const DOME_ROWS = Math.ceil(DOME_R);
 
   const STEP = 1 / 60;
   const CHOMP_FRAMES = 14;          // сколько кадров рот открыт после взмаха
@@ -68,7 +70,7 @@
   let scale = 1;
 
   // ── Заглушки спрайтов ───────────────────────────────────────────────────────
-  // Игра запускается и без фото: смайлик и труба-амулет рисуются кодом.
+  // Игра запускается и без фото: смайлик и розовая труба рисуются кодом.
   // Настоящие спрайты кладёт tools/pixelate.py (манифест assets/js/sprites.js).
 
   function smiley() {
@@ -85,37 +87,31 @@
     return x.canvas;
   }
 
-  // Труба в виде мультяшного тайского амулета: золотой ствол, красная обмотка,
-  // скруглённый кончик. Раскладка атласа: шапка 30×12 сверху, под ней тайл 26×16.
-  function amuletAtlas() {
+  // Розовая труба: гладкий ствол без полос и большая круглая шапка-полукруг с
+  // чёрточкой по центру. Раскладка атласа: шапка 31×22 сверху, под ней тайл 27×16.
+  // Тот же формат у спрайтов tools/pixelate.py.
+  function pipeAtlas() {
     const c = canvas(CAP_W, CAP_H + TILE_H), x = c.getContext('2d');
-    const OUT = '#2e1b10';
-    const GOLD = { base: '#dca43f', hi: '#f8d77f', shade: '#b07a2b', dark: '#7b5120' };
-    const RED = { base: '#c8322f', hi: '#ec5a50', shade: '#9a2326', dark: '#6e1620' };
-    const tone = (pal, t) => t < .10 ? pal.base : t < .30 ? pal.hi : t < .58 ? pal.base : t < .82 ? pal.shade : pal.dark;
+    const OUT = '#5b2139';
+    const PINK = { base: '#f4a3b5', hi: '#ffd1dc', shade: '#e07c96', dark: '#b85572' };
+    const tone = (t) => t < .10 ? PINK.base : t < .30 ? PINK.hi : t < .58 ? PINK.base : t < .82 ? PINK.shade : PINK.dark;
     const dot = (px, py, col) => { x.fillStyle = col; x.fillRect(px, py, 1, 1); };
 
-    // Ствол: две строки красной обмотки, под ней тень, дальше золото.
-    const x0 = (CAP_W - PIPE_W) / 2;
+    // Ствол: только вертикальное «цилиндрическое» затенение, по бокам контур.
     for (let y = 0; y < TILE_H; y++) for (let px = 0; px < PIPE_W; px++) {
-      const t = px / (PIPE_W - 1);
-      const col = px === 0 || px === PIPE_W - 1 ? OUT
-        : y < 2 ? tone(RED, t)
-        : y === 2 ? GOLD.dark
-        : tone(GOLD, t);
-      dot(x0 + px, CAP_H + y, col);
+      dot(CAP_OFF + px, CAP_H + y, px === 0 || px === PIPE_W - 1 ? OUT : tone(px / (PIPE_W - 1)));
     }
 
-    // Шапка: купол из восьми строк, строка тени, красный ободок, нижний контур.
-    const INSET = [9, 6, 4, 3, 2, 1, 0, 0, 0, 0, 0, 0];
-    const inside = (px, py) => py >= 0 && py < CAP_H && px >= INSET[py] && px <= CAP_W - 1 - INSET[py];
+    // Шапка: полукруг сверху, ниже прямой пояс, снизу контур.
+    const inside = (px, py) => px >= 0 && px < CAP_W && py >= 0 && py < CAP_H
+      && (py >= DOME_ROWS || (px + .5 - DOME_R) ** 2 + (py + .5 - DOME_R) ** 2 <= DOME_R * DOME_R);
     for (let y = 0; y < CAP_H; y++) for (let px = 0; px < CAP_W; px++) {
       if (!inside(px, y)) continue;
-      const edge = y === 0 || y === CAP_H - 1 || !inside(px - 1, y) || !inside(px + 1, y) || !inside(px, y - 1);
-      const t = px / (CAP_W - 1);
-      dot(px, y, edge ? OUT : y === 8 ? GOLD.dark : y >= 9 ? tone(RED, t) : tone(GOLD, t));
+      const edge = !inside(px - 1, y) || !inside(px + 1, y) || !inside(px, y - 1) || !inside(px, y + 1);
+      dot(px, y, edge ? OUT : tone(px / (CAP_W - 1)));
     }
-    dot(7, 3, '#fff2b8'); dot(8, 3, '#fff2b8'); dot(7, 4, '#fff2b8');   // блик на куполе
+    [[8, 6], [8, 5], [9, 4], [10, 3], [11, 3]].forEach(([px, py]) => dot(px, py, '#fff0f4'));   // блик
+    for (let y = 4; y <= 10; y++) dot(Math.floor(CAP_W / 2), y, OUT);                          // чёрточка по центру
     return c;
   }
 
@@ -172,13 +168,17 @@
     const top = p.gy - GAP / 2, bot = p.gy + GAP / 2;
     const rects = [
       [p.x, -300, PIPE_W, top - CAP_H + 300],                        // верхний ствол
-      [p.x - 2, top - CAP_H, CAP_W, CAP_H - DOME],                   // верхняя шапка без купола
-      [p.x + 5, top - DOME, CAP_W - 10, DOME],                       // купол: уже шапки
-      [p.x - 2, bot + DOME, CAP_W, CAP_H - DOME],                    // нижняя шапка
-      [p.x + 5, bot, CAP_W - 10, DOME],
+      [p.x - CAP_OFF, top - CAP_H, CAP_W, CAP_H - DOME_ROWS],         // верхняя шапка, прямой пояс
+      [p.x - CAP_OFF, bot + DOME_ROWS, CAP_W, CAP_H - DOME_ROWS],     // нижняя шапка, прямой пояс
       [p.x, bot + CAP_H, PIPE_W, GROUND_Y - bot - CAP_H],            // нижний ствол
     ];
-    return hit.some((c) => rects.some(([x, y, w, h]) => circleHitsRect(face.x, face.y + c.y, c.r, x, y, w, h)));
+    const cx = p.x + PIPE_W / 2;
+    const domes = [top - DOME_R, bot + DOME_R];                      // центры кругов-куполов по высоте
+    return hit.some((c) => {
+      const cy = face.y + c.y;
+      return rects.some(([x, y, w, h]) => circleHitsRect(face.x, cy, c.r, x, y, w, h))
+        || domes.some((dy) => Math.hypot(face.x - cx, cy - dy) < c.r + DOME_R - 1);   // −1: край купола прощаем
+    });
   }
 
   // Рот открывается до OPEN высоты головы; челюсть уезжает вниз, поэтому на земле
@@ -362,10 +362,9 @@
 
   // ── Отрисовка: трубы ────────────────────────────────────────────────────────
   function tileBody(atlas, x, y, len) {
-    const sx = (CAP_W - PIPE_W) / 2;
     for (let o = 0; o < len; o += TILE_H) {
       const h = Math.min(TILE_H, len - o);
-      g.drawImage(atlas, sx, CAP_H, PIPE_W, h, x, y + o, PIPE_W, h);
+      g.drawImage(atlas, CAP_OFF, CAP_H, PIPE_W, h, x, y + o, PIPE_W, h);
     }
   }
 
@@ -373,12 +372,12 @@
     const atlas = pipeSprites[p.s];
     const x = Math.round(p.x);
     const top = Math.round(p.gy - GAP / 2), bot = Math.round(p.gy + GAP / 2);
-    g.drawImage(atlas, 0, 0, CAP_W, CAP_H, x - 2, bot, CAP_W, CAP_H);
+    g.drawImage(atlas, 0, 0, CAP_W, CAP_H, x - CAP_OFF, bot, CAP_W, CAP_H);
     tileBody(atlas, x, bot + CAP_H, GROUND_Y - bot - CAP_H);
     g.save();                                       // верхняя труба — та же, но вверх ногами
     g.translate(0, top);
     g.scale(1, -1);
-    g.drawImage(atlas, 0, 0, CAP_W, CAP_H, x - 2, 0, CAP_W, CAP_H);
+    g.drawImage(atlas, 0, 0, CAP_W, CAP_H, x - CAP_OFF, 0, CAP_W, CAP_H);
     tileBody(atlas, x, CAP_H, top - CAP_H);
     g.restore();
   }
@@ -641,7 +640,7 @@
     wx.fillRect(0, 0, FW, FH);
 
     pipeSprites = pipeImgs.filter(Boolean);
-    if (!pipeSprites.length) pipeSprites = [amuletAtlas()];
+    if (!pipeSprites.length) pipeSprites = [pipeAtlas()];
 
     best = readBest();
     groundX = cloudX = cityX = 0;

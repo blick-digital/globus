@@ -1,8 +1,14 @@
-/* Звук. Короткие эффекты (очко, удар) — синтез на WebAudio, без файлов.
-   Голоса героя — обычные <audio>, чтобы игра работала и с file://:
-     assets/audio/cry.* — голос при ударе, assets/audio/am.* — «ам» на каждый взмах.
-   Для каждого голоса браузер берёт сначала .mp3 (своя запись), а если его нет —
-   сгенерированный .m4a (tools/make-voices.sh). */
+/* Звук.
+   Голоса героя — assets/audio/cry.* (при ударе) и assets/audio/am.* («ам» на взмах).
+   Для каждого берётся сначала .mp3 (своя запись), а если его нет — сгенерированный
+   .m4a (tools/make-voices.sh).
+
+   Играют они через WebAudio: после того как первое «настоящее» касание разбудило
+   контекст, звук идёт в любой момент, хоть в момент удара, когда жеста уже нет.
+   На iPhone будить можно только отпусканием пальца (pointerup, touchend, click) —
+   pointerdown и touchstart не считаются, поэтому будим по ним, а не по нажатию.
+   Если WebAudio недоступен (например, игра открыта двойным кликом, file://),
+   голоса играют обычными <audio>. Короткие эффекты (очко, удар) — синтез. */
 (() => {
   'use strict';
 
@@ -13,6 +19,9 @@
   let muted = load();
   let ac = null;
 
+  // iOS: без этого беззвучный режим на боковой кнопке глушит и WebAudio.
+  try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) { /* не страшно */ }
+
   const context = () => {
     if (!ac) {
       const AC = window.AudioContext || window.webkitAudioContext;
@@ -20,7 +29,54 @@
     }
     return ac;
   };
+  const running = () => ac && ac.state === 'running';
 
+  // ── Голоса через WebAudio ───────────────────────────────────────────────────
+  const buffers = {};
+
+  const decode = (data) => new Promise((res, rej) => {
+    // Старый Safari умеет только колбэки, новые — промис; второй вызов resolve безвреден.
+    const p = ac.decodeAudioData(data, res, rej);
+    if (p && p.then) p.then(res, rej);
+  });
+
+  async function loadBuffer(name) {
+    if (!context() || !window.fetch) return;
+    for (const ext of ['mp3', 'm4a']) {
+      try {
+        const r = await fetch(`assets/audio/${name}.${ext}`);
+        if (!r.ok) continue;
+        buffers[name] = await decode(await r.arrayBuffer());
+        return;
+      } catch (e) { /* пробуем следующий формат */ }
+    }
+  }
+  loadBuffer('cry');
+  loadBuffer('am');
+
+  // Тон меняется вместе со скоростью: выше и быстрее — ближе к детскому голосу.
+  // vibrato — дрожание тона, как всхлип.
+  function playBuffer(name, rate, vibrato) {
+    const buf = buffers[name];
+    if (!buf || !running()) return null;
+    const src = ac.createBufferSource();
+    src.buffer = buf;
+    src.playbackRate.value = rate;
+    if (vibrato) {
+      const lfo = ac.createOscillator();
+      const depth = ac.createGain();
+      lfo.frequency.value = 6;
+      depth.gain.value = 0.05;
+      lfo.connect(depth).connect(src.playbackRate);
+      lfo.start();
+      src.onended = () => lfo.stop();
+    }
+    src.connect(ac.destination);
+    src.start();
+    return src;
+  }
+
+  // ── Запасной путь: обычные <audio> ──────────────────────────────────────────
   /* Первый элемент сам выбирает файл (mp3, иначе m4a). Остальные копии берут уже
      выбранный им адрес, чтобы не стучаться в отсутствующий mp3 по нескольку раз. */
   function voice(name, copies) {
@@ -48,70 +104,95 @@
   const am = voice('am', 3);          // несколько копий: взмахи бывают чаще, чем звучит «ам»
   let amNext = 0;
 
-  function play(a, rate) {
-    if (muted) return;
+  function playElement(a, rate) {
     try {
       a.pause();
       a.currentTime = 0;
       a.defaultPlaybackRate = a.playbackRate = rate;
-      // Тон меняется вместе со скоростью: выше и быстрее — ближе к детскому плачу.
       a.preservesPitch = a.mozPreservesPitch = a.webkitPreservesPitch = false;
       const p = a.play();
       if (p && p.catch) p.catch(() => {});
     } catch (e) { /* звук необязателен */ }
   }
 
-  /* Браузер разрешает звук только после жеста. Первое нажатие «будит» контекст
-     и один раз беззвучно проигрывает плач: на iOS иначе его не запустить в момент
-     удара, когда жеста уже нет. «Ам» играет прямо в жесте и в этом не нуждается. */
-  let unlocked = false;
+  // ── Разблокировка ───────────────────────────────────────────────────────────
+  let elementUnlocked = false;
+
   function unlock() {
-    if (unlocked) return;
-    unlocked = true;
     const c = context();
-    if (c && c.state === 'suspended') c.resume();
-    cryVoice.muted = true;
-    const done = () => { cryVoice.pause(); cryVoice.currentTime = 0; cryVoice.muted = false; };
-    const p = cryVoice.play();
-    if (p && p.then) p.then(done, done); else done();
+    if (c && c.state !== 'running') {
+      const r = c.resume();
+      if (r && r.catch) r.catch(() => {});
+      try {                           // тихий буфер: на старых iOS только он включает звук
+        const s = c.createBufferSource();
+        s.buffer = c.createBuffer(1, 1, 22050);
+        s.connect(c.destination);
+        s.start(0);
+      } catch (e) { /* не страшно */ }
+    }
+    // Запасному <audio> нужно один раз беззвучно сыграть плач в жесте, иначе iOS
+    // не даст запустить его в момент удара. Если WebAudio загрузил голос — не нужно.
+    if (!buffers.cry && !elementUnlocked) {
+      elementUnlocked = true;
+      cryVoice.muted = true;
+      const done = () => { cryVoice.pause(); cryVoice.currentTime = 0; cryVoice.muted = false; };
+      const fail = () => { cryVoice.muted = false; elementUnlocked = false; };   // жест был не тот — повторим
+      const p = cryVoice.play();
+      if (p && p.then) p.then(done, fail); else done();
+    }
   }
 
+  ['pointerup', 'touchend', 'click', 'keydown'].forEach((ev) => {
+    addEventListener(ev, unlock, { capture: true, passive: true });
+  });
+
+  // ── Эффекты ─────────────────────────────────────────────────────────────────
   function tone(freq, dur, o = {}) {
-    const c = context();
-    if (!c || muted) return;
-    const t = c.currentTime + (o.delay || 0);
-    const osc = c.createOscillator();
-    const gain = c.createGain();
+    if (!running() || muted) return;
+    const t = ac.currentTime + (o.delay || 0);
+    const osc = ac.createOscillator();
+    const gain = ac.createGain();
     osc.type = o.type || 'square';
     osc.frequency.setValueAtTime(freq, t);
     if (o.to) osc.frequency.exponentialRampToValueAtTime(o.to, t + dur);
     gain.gain.setValueAtTime(o.vol || 0.1, t);
     gain.gain.exponentialRampToValueAtTime(0.001, t + dur);
-    osc.connect(gain).connect(c.destination);
+    osc.connect(gain).connect(ac.destination);
     osc.start(t);
     osc.stop(t + dur + 0.03);
   }
 
   function noise(dur, vol) {
-    const c = context();
-    if (!c || muted) return;
-    const buf = c.createBuffer(1, Math.floor(c.sampleRate * dur), c.sampleRate);
+    if (!running() || muted) return;
+    const buf = ac.createBuffer(1, Math.floor(ac.sampleRate * dur), ac.sampleRate);
     const d = buf.getChannelData(0);
     for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / d.length);
-    const src = c.createBufferSource();
-    const gain = c.createGain();
+    const src = ac.createBufferSource();
+    const gain = ac.createGain();
     gain.gain.value = vol;
     src.buffer = buf;
-    src.connect(gain).connect(c.destination);
+    src.connect(gain).connect(ac.destination);
     src.start();
   }
 
-  // Плач чуть «дрожит»: плейбэк-рейт качается — тон ходит вверх-вниз, как всхлип.
-  let wobble = 0;
+  // ── Голоса героя ────────────────────────────────────────────────────────────
   const CRY_RATE = 1.18;
-  function cry() {
-    play(cryVoice, CRY_RATE);
+  let cryNode = null;
+  let wobble = 0;
+
+  function stopCry() {
     cancelAnimationFrame(wobble);
+    if (cryNode) { try { cryNode.stop(); } catch (e) { /* уже стоит */ } cryNode = null; }
+    try { cryVoice.pause(); cryVoice.currentTime = 0; } catch (e) { /* ничего */ }
+  }
+
+  function cry() {
+    if (muted) return;
+    stopCry();
+    cryNode = playBuffer('cry', CRY_RATE, true);
+    if (cryNode) return;
+    // Запасной путь: тон «дрожит» через playbackRate элемента.
+    playElement(cryVoice, CRY_RATE);
     const t0 = performance.now();
     const tick = () => {
       if (cryVoice.paused || cryVoice.ended) return;
@@ -124,9 +205,13 @@
   window.Sound = {
     unlock,
     cry,
+    stopCry,
     am() {                                   // «ам» с лёгким разбросом тона, чтобы не надоедало
+      if (muted) return;
+      const rate = 0.95 + Math.random() * 0.2;
+      if (playBuffer('am', rate)) return;
       amNext = (amNext + 1) % am.length;
-      play(am[amNext], 0.95 + Math.random() * 0.2);
+      playElement(am[amNext], rate);
     },
     score() {
       tone(880, 0.08);
@@ -136,16 +221,14 @@
       noise(0.16, 0.25);
       tone(190, 0.28, { type: 'sawtooth', to: 50, vol: 0.2 });
     },
-    stopCry() {
-      cancelAnimationFrame(wobble);
-      try { cryVoice.pause(); cryVoice.currentTime = 0; } catch (e) { /* ничего */ }
-    },
     toggleMute() {
       muted = !muted;
       save(muted);
-      if (muted) { try { cryVoice.pause(); am.forEach((a) => a.pause()); } catch (e) { /* ничего */ } }
+      if (muted) { stopCry(); try { am.forEach((a) => a.pause()); } catch (e) { /* ничего */ } }
       return muted;
     },
     get muted() { return muted; },
+    // Для отладки из консоли: состояние контекста и какие голоса загружены.
+    info() { return { context: ac ? ac.state : 'нет', buffers: Object.keys(buffers) }; },
   };
 })();

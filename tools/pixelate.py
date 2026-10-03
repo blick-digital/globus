@@ -48,7 +48,9 @@ OUTLINE = (24, 22, 38)
 
 FACE_H = 34                                 # высота головы без обводки, px
 SUPER = 4                                   # во сколько раз уменьшаем: сглаживает шум
-PIPE_W, CAP_W, CAP_H, TILE_H = 26, 30, 12, 16
+PIPE_W, CAP_W, CAP_H, TILE_H = 27, 31, 22, 16
+DOME_R = CAP_W / 2                          # шапка — полукруг этого радиуса, ниже прямой пояс
+DOME_ROWS = math.ceil(DOME_R)
 PIPE_COLORS = 7                             # цветов в палитре трубы
 
 
@@ -210,7 +212,8 @@ def shade(img, rows=None):
 
 
 def pipe_sprite(path, rotate):
-    """Атлас 30×28: шапка 30×12 сверху, под ней бесшовное тело 26×16 по центру."""
+    """Атлас 31×38: шапка 31×22 сверху (полукруг и чёрточка по центру), под ней
+    бесшовное тело 27×16 по центру. Тот же формат, что рисует сама игра."""
     img = load(path, rotate)
 
     # Тело: верхнюю половину тайла отражаем вниз, чтобы стык был бесшовным.
@@ -220,8 +223,7 @@ def pipe_sprite(path, rotate):
     body.paste(ImageOps.flip(top), (0, TILE_H // 2))
     body = shade(body)
 
-    cap = downscale(crop_center(img, CAP_W / CAP_H), CAP_W, CAP_H)
-    cap = shade(cap, {1: 1.18, CAP_H - 2: .72})
+    cap = shade(downscale(crop_center(img, CAP_W / CAP_H), CAP_W, CAP_H))
 
     mean = tuple(int(sum(c) / len(c)) for c in zip(*[body.getpixel((x, y))
                  for x in range(PIPE_W) for y in range(TILE_H)]))
@@ -231,17 +233,24 @@ def pipe_sprite(path, rotate):
     atlas.paste(body, ((CAP_W - PIPE_W) // 2, CAP_H))
     atlas = quantize(atlas, PIPE_COLORS)
 
+    def inside(x, y):
+        return (0 <= x < CAP_W and 0 <= y < CAP_H and
+                (y >= DOME_ROWS or (x + .5 - DOME_R) ** 2 + (y + .5 - DOME_R) ** 2 <= DOME_R ** 2))
+
     out = Image.new('RGBA', (CAP_W, h), (0, 0, 0, 0))
     px, src = out.load(), atlas.load()
     x0 = (CAP_W - PIPE_W) // 2
-    for y in range(h):
+    for y in range(CAP_H):
         for x in range(CAP_W):
-            if y < CAP_H:
-                edge = x in (0, CAP_W - 1) or y in (0, CAP_H - 1)
+            if inside(x, y):
+                edge = not (inside(x - 1, y) and inside(x + 1, y) and inside(x, y - 1) and inside(x, y + 1))
                 px[x, y] = OUTLINE + (255,) if edge else src[x, y] + (255,)
-            elif x0 <= x < x0 + PIPE_W:
-                edge = x in (x0, x0 + PIPE_W - 1)
-                px[x, y] = OUTLINE + (255,) if edge else src[x, y] + (255,)
+    for y in range(4, 11):                      # чёрточка по центру шапки
+        px[CAP_W // 2, y] = OUTLINE + (255,)
+    for y in range(CAP_H, h):
+        for x in range(x0, x0 + PIPE_W):
+            edge = x in (x0, x0 + PIPE_W - 1)
+            px[x, y] = OUTLINE + (255,) if edge else src[x, y] + (255,)
     return out
 
 
