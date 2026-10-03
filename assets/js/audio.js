@@ -10,8 +10,8 @@
    Если WebAudio недоступен (например, игра открыта двойным кликом, file://),
    голоса играют обычными <audio>. Короткие эффекты (очко, удар) — синтез.
 
-   Музыка заставки — assets/audio/music.m4a (tools/make-music.py), играет по кругу,
-   пока игрок не сделает первый взмах. Браузеры не дают включить звук до первого
+   Музыка — assets/audio/music.m4a (tools/make-music.py), играет по кругу всю игру:
+   на заставке громче, в полёте тише, чтобы были слышны голоса. Браузеры не дают включить звук до первого
    касания, поэтому, если сразу нельзя, музыка стартует с касанием. */
 (() => {
   'use strict';
@@ -152,7 +152,9 @@
   });
 
   // ── Музыка заставки ─────────────────────────────────────────────────────────
-  const MUSIC_VOL = 0.8;
+  const MUSIC_VOL = 0.8;              // на заставке
+  const MUSIC_VOL_PLAY = 0.35;        // в полёте
+  let musicLevel = MUSIC_VOL;
   let wantMusic = false;
   let musicNode = null, musicGain = null, musicEl = null;
 
@@ -161,7 +163,7 @@
     if (buffers.music) {
       if (!running()) return;         // дождёмся касания: после него сюда вернёмся
       musicGain = ac.createGain();
-      musicGain.gain.value = MUSIC_VOL;
+      musicGain.gain.value = musicLevel;
       musicNode = ac.createBufferSource();
       musicNode.buffer = buffers.music;
       musicNode.loop = true;
@@ -171,8 +173,8 @@
       if (!musicEl) {
         musicEl = new Audio('assets/audio/music.m4a');
         musicEl.loop = true;
-        musicEl.volume = MUSIC_VOL;
       }
+      musicEl.volume = musicLevel;
       const p = musicEl.play();
       if (p && p.catch) p.catch(() => {});
     }
@@ -267,11 +269,21 @@
       noise(0.16, 0.25);
       tone(190, 0.28, { type: 'sawtooth', to: 50, vol: 0.2 });
     },
-    // on = true: музыка заставки должна играть (стартует, как только браузер позволит);
+    // on = true: музыка должна играть (стартует, как только браузер позволит);
     // false: плавно затихает и больше не включается.
     music(on) {
       wantMusic = on;
       if (on) startMusic(); else haltMusic(0.5);
+    },
+    // Громкость музыки: true — тише (идёт игра), false — как на заставке.
+    duck(on) {
+      musicLevel = on ? MUSIC_VOL_PLAY : MUSIC_VOL;
+      if (musicNode) {
+        const t = ac.currentTime;
+        musicGain.gain.setValueAtTime(musicGain.gain.value, t);
+        musicGain.gain.linearRampToValueAtTime(musicLevel, t + 0.6);
+      }
+      if (musicEl) musicEl.volume = musicLevel;
     },
     toggleMute() {
       muted = !muted;
