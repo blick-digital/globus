@@ -115,12 +115,42 @@
     return c;
   }
 
+  // Труба-бутылка пива: «шапка» — горлышко с золотой пробкой и плечи, ствол — тёмное
+  // стекло. Та же раскладка атласа, что у розовой трубы. Горлышко смотрит в просвет.
+  // Половина ширины бутылки по строкам шапки, от центральной колонки.
+  const BOTTLE_HW = [6, 6, 6, 6, 4, 4, 4, 4, 4, 4, 5, 6, 6, 7, 8, 8, 9, 10, 11, 12, 12, 13];
+
+  function bottleAtlas() {
+    const c = canvas(CAP_W, CAP_H + TILE_H), x = c.getContext('2d');
+    const OUT = '#2b1406';
+    const GLASS = { base: '#9a5516', hi: '#d68a35', shade: '#6e3a0e', dark: '#4a2509' };
+    const GOLD = { base: '#d9b44a', hi: '#f5e08a', shade: '#b08f2c', dark: '#8a6c1c' };
+    const tone = (pal, t) => t < .10 ? pal.base : t < .30 ? pal.hi : t < .58 ? pal.base : t < .82 ? pal.shade : pal.dark;
+    const dot = (px, py, col) => { x.fillStyle = col; x.fillRect(px, py, 1, 1); };
+    const mid = Math.floor(CAP_W / 2);
+
+    // Ствол: тёмное стекло с бликом, тот же затенённый «цилиндр», что у розовой трубы.
+    for (let y = 0; y < TILE_H; y++) for (let px = 0; px < PIPE_W; px++) {
+      dot(CAP_OFF + px, CAP_H + y, px === 0 || px === PIPE_W - 1 ? OUT : tone(GLASS, px / (PIPE_W - 1)));
+    }
+
+    // Горлышко и плечи; первые четыре строки — пробка.
+    const inside = (px, py) => py >= 0 && py < CAP_H && Math.abs(px - mid) <= BOTTLE_HW[py];
+    for (let y = 0; y < CAP_H; y++) for (let px = 0; px < CAP_W; px++) {
+      if (!inside(px, y)) continue;
+      const edge = !inside(px - 1, y) || !inside(px + 1, y) || !inside(px, y - 1) || !inside(px, y + 1) && y < CAP_H - 1;
+      const t = (px - (mid - BOTTLE_HW[y])) / (2 * BOTTLE_HW[y]);
+      dot(px, y, edge ? OUT : y < 4 ? (y === 3 ? GOLD.dark : tone(GOLD, t)) : tone(GLASS, t));
+    }
+    return c;
+  }
+
   // ── Состояние ───────────────────────────────────────────────────────────────
-  let faceSprite, crySprite, faceWhite, faceDef, pipeSprites;
+  let faceSprite, crySprite, faceWhite, faceDef, kinds;   // kinds — виды труб, идут по очереди
   let FW = 24, FH = 24;               // размер спрайта головы, берётся из картинки
   let hit = [];                       // круги хитбокса в пикселях
   let state, t, score, best, newBest;
-  let face, pipes, tears, lastGy;
+  let face, pipes, tears, lastGy, pipeCount;
   let groundX, cloudX, cityX;
   let shake, flash, dieT, overT, popT;
   let bubbleT;
@@ -130,6 +160,7 @@
     t = 0; score = 0; newBest = false;
     face = { x: FACE_X, y: 118, base: 118, vy: 0, rot: 0, chomp: 0, onGround: false };
     pipes = [];
+    pipeCount = 0;
     tears = [];
     lastGy = GROUND_Y / 2;
     shake = flash = dieT = overT = popT = 0;
@@ -147,7 +178,7 @@
   function press() {
     Sound.unlock();
     if (state === 'menu') { state = 'ready'; t = 0; }
-    else if (state === 'ready') { state = 'play'; Sound.duck(true); flap(); }
+    else if (state === 'ready') { state = 'play'; flap(); }
     else if (state === 'play') flap();
     else if (state === 'over' && overT > RESTART_AFTER) reset();
   }
@@ -156,7 +187,9 @@
     const lo_ = MARGIN + GAP / 2, hi_ = GROUND_Y - MARGIN - GAP / 2;
     const gy = clamp(lastGy + rand(-MAX_SHIFT, MAX_SHIFT), lo_, hi_);
     lastGy = gy;
-    pipes.push({ x, gy, scored: false, s: Math.floor(Math.random() * pipeSprites.length) });
+    const kind = kinds[pipeCount++ % kinds.length];                 // розовая, бутылка, розовая, …
+    const atlas = kind.atlases[Math.floor(Math.random() * kind.atlases.length)];
+    pipes.push({ x, gy, scored: false, atlas, shape: kind.shape });
   }
 
   function circleHitsRect(cx, cy, r, rx, ry, rw, rh) {
@@ -164,21 +197,28 @@
     return (cx - nx) ** 2 + (cy - ny) ** 2 < r * r;
   }
 
+  // Форма трубы для столкновений: срезы [глубина от кончика, до, полуширина] и круги
+  // [глубина центра, радиус]. Кончик — край просвета, глубина растёт от него к краю экрана.
+  const BODY = [CAP_H, 400, PIPE_W / 2];
+  const chunks = (hw, n) => {
+    const out = [];
+    for (let i = 0; i < hw.length; i += n) out.push([i, Math.min(i + n, hw.length), Math.max(...hw.slice(i, i + n))]);
+    return out;
+  };
+  const SHAPES = {
+    pink: { slices: [[DOME_ROWS, CAP_H, CAP_W / 2], BODY], circles: [[DOME_R, DOME_R - 1]] },   // −1: край купола прощаем
+    bottle: { slices: [...chunks(BOTTLE_HW, 2), BODY], circles: [] },
+  };
+
   function hitsPipe(p) {
-    const top = p.gy - GAP / 2, bot = p.gy + GAP / 2;
-    const rects = [
-      [p.x, -300, PIPE_W, top - CAP_H + 300],                        // верхний ствол
-      [p.x - CAP_OFF, top - CAP_H, CAP_W, CAP_H - DOME_ROWS],         // верхняя шапка, прямой пояс
-      [p.x - CAP_OFF, bot + DOME_ROWS, CAP_W, CAP_H - DOME_ROWS],     // нижняя шапка, прямой пояс
-      [p.x, bot + CAP_H, PIPE_W, GROUND_Y - bot - CAP_H],            // нижний ствол
-    ];
     const cx = p.x + PIPE_W / 2;
-    const domes = [top - DOME_R, bot + DOME_R];                      // центры кругов-куполов по высоте
-    return hit.some((c) => {
+    return [[p.gy - GAP / 2, -1], [p.gy + GAP / 2, 1]].some(([tip, dir]) => hit.some((c) => {
       const cy = face.y + c.y;
-      return rects.some(([x, y, w, h]) => circleHitsRect(face.x, cy, c.r, x, y, w, h))
-        || domes.some((dy) => Math.hypot(face.x - cx, cy - dy) < c.r + DOME_R - 1);   // −1: край купола прощаем
-    });
+      return p.shape.slices.some(([d0, d1, hw]) => {
+        const a = tip + dir * d0, b = tip + dir * d1;
+        return circleHitsRect(face.x, cy, c.r, cx - hw, Math.min(a, b), hw * 2, Math.abs(b - a));
+      }) || p.shape.circles.some(([d, r]) => Math.hypot(face.x - cx, cy - (tip + dir * d)) < c.r + r);
+    }));
   }
 
   // Рот открывается до OPEN высоты головы; челюсть уезжает вниз, поэтому на земле
@@ -369,7 +409,7 @@
   }
 
   function drawPipe(p) {
-    const atlas = pipeSprites[p.s];
+    const atlas = p.atlas;
     const x = Math.round(p.x);
     const top = Math.round(p.gy - GAP / 2), bot = Math.round(p.gy + GAP / 2);
     g.drawImage(atlas, 0, 0, CAP_W, CAP_H, x - CAP_OFF, bot, CAP_W, CAP_H);
@@ -639,15 +679,18 @@
     wx.fillStyle = '#ffffff';
     wx.fillRect(0, 0, FW, FH);
 
-    pipeSprites = pipeImgs.filter(Boolean);
-    if (!pipeSprites.length) pipeSprites = [pipeAtlas()];
+    // Розовые (или трубы из фото, если они есть) и бутылки идут по очереди.
+    const pinks = pipeImgs.filter(Boolean);
+    kinds = [
+      { atlases: pinks.length ? pinks : [pipeAtlas()], shape: SHAPES.pink },
+      { atlases: [bottleAtlas()], shape: SHAPES.bottle },
+    ];
 
     best = readBest();
     groundX = cloudX = cityX = 0;
     reset();
     state = 'menu';                                 // игра открывается с вопроса, а не сразу со старта
     face.base = face.y = MENU_FACE_Y;
-    Sound.music(true);                              // музыка играет всю игру, в полёте тише
     fit();
     addEventListener('resize', fit);
     screen.addEventListener('pointerdown', onPointer);

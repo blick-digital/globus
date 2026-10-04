@@ -18,7 +18,7 @@
 
   // Версия файлов: меняется вместе со звуками, чтобы встроенные браузеры (Телеграм и др.)
   // не отдавали старые из кеша.
-  const VER = '?v=2';
+  const VER = '?v=3';
 
   const KEY = 'face-flappy.muted';
   const load = () => { try { return localStorage.getItem(KEY) === '1'; } catch (e) { return false; } };
@@ -60,7 +60,9 @@
     }
   }
   const loaded = {};                  // что уже отработало: пригодилось ли запасному пути
-  ['cry', 'am', 'music'].forEach((name) => loadBuffer(name).then(() => { loaded[name] = true; startMusic(); }));
+  const fetchVoice = (name) => loadBuffer(name).then(() => { loaded[name] = true; startMusic(); });
+  fetchVoice('cry');
+  fetchVoice('am');
 
   // Тон меняется вместе со скоростью: выше и быстрее — ближе к детскому голосу.
   // vibrato — дрожание тона, как всхлип.
@@ -277,6 +279,7 @@
     // false: плавно затихает и больше не включается.
     music(on) {
       wantMusic = on;
+      if (on && !('music' in loaded)) { loaded.music = false; fetchVoice('music'); }   // грузим, только если музыка включена
       if (on) startMusic(); else haltMusic(0.5);
     },
     // Громкость музыки: true — тише (идёт игра), false — как на заставке.
